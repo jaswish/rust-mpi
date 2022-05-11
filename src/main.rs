@@ -4,7 +4,6 @@ use std::{sync::{mpsc::{Receiver, Sender}, Arc, Mutex}, collections::HashMap};
 // TODO: Add ability to use any number of threads in hypercube, not just powers of two.
 // TODO: pass in src node as parameter? for testing?
 // TODO: Have any number of parameters in argument function (is that possible in rust?).
-// TODO: Rename project.
 // TODO: Wrap sender/receiver hash map in struct/#define them?
 
 // Previous development code that was phased out.
@@ -215,7 +214,7 @@ mod hypercube {
 }
 
 mod ring {
-    use std::{thread::{self, JoinHandle}, sync::{mpsc::{channel, Receiver, Sender}, Arc, Mutex}, collections::HashMap};
+    use std::{thread::{self, JoinHandle}, sync::{mpsc::{channel, Receiver, Sender}, Arc, Mutex, MutexGuard}, collections::HashMap};
 
     pub fn run(p: u32, f: fn(usize, u32, HashMap<usize, Sender<String>>, Arc<Mutex<HashMap<usize, Receiver<String>>>>)) -> Vec<JoinHandle<()>> {
         let mut handles = vec![];
@@ -269,14 +268,24 @@ mod ring {
         return handles;
     }
 
-    // TODO: Finish implementing this.
-    pub fn all_broadcast_sim(my_id: usize, p: u32, my_msg: String) {
+    pub fn all_broadcast_sim(my_id: usize, p: u32, my_msg: String, all_my_tx: &HashMap<usize, Sender<String>>, all_my_rx: &MutexGuard<HashMap<usize, Receiver<String>>>) {
         let p_usize: usize = p.try_into().unwrap();
         let left = (my_id + p_usize - 1) % p_usize;
         let right = (my_id + 1) % p_usize;
-        let result: Vec<String> = vec![my_msg];
-    
+        let mut result: Vec<String> = vec![my_msg];
+        for i in 1..p {
+            let send_chan = all_my_tx.get(&right.try_into().unwrap()).unwrap();
+            let to_send = result.last().cloned().unwrap();
+            send_chan.send(to_send).unwrap();
+
+            let rx_chan = all_my_rx.get(&left.try_into().unwrap()).unwrap();
+            let ans = rx_chan.recv().unwrap();
+            result.push(ans);
+        }
+
+        println!("ID {}: {:?}", my_id, result);
     }
+
 }
 
 fn my_thread(id: usize, n: u32, all_my_tx: HashMap<usize, Sender<String>>, my_rx_clone: Arc<Mutex<HashMap<usize, Receiver<String>>>>) {
@@ -287,7 +296,15 @@ fn my_thread(id: usize, n: u32, all_my_tx: HashMap<usize, Sender<String>>, my_rx
     // println!("{} {:?}", id, all_my_tx);
     // println!("{} {:?}", id, all_my_rx);
 
-    // Code for simulated one-to-all reduction.
+    //////////////////////////////////////////////
+    // Code for simulated all-to-all broadcast. //
+    //////////////////////////////////////////////
+    let mut msg = String::from("Hello World");
+    msg.push_str(&format!("{}", id));
+    ring::all_broadcast_sim(id, n, msg, &all_my_tx, &all_my_rx)
+
+    //////////////////////////////////////////////
+    // Code for simulated one-to-all reduction. //
     //////////////////////////////////////////////
     // let id_str: String = id.to_string();
     // let mut msg: String = String::from("Hello from ");
@@ -297,24 +314,27 @@ fn my_thread(id: usize, n: u32, all_my_tx: HashMap<usize, Sender<String>>, my_rx
     //     println!("My Answer: {:?}", ans_vec);
     // }
 
-    // Perform a one-to-all broadcast.
-    if id == 0 {
-        let msg: String = String::from("Hello");
-        hypercube::broadcast_send(msg, n, id, &all_my_tx);
-    } else {
-        let msg = hypercube::broadcast_recv(0, n, id, &all_my_tx, &all_my_rx);
-        println!("{}", msg);
-    }
+    /////////////////////////////////////
+    // Perform a one-to-all broadcast. //
+    /////////////////////////////////////
+    // if id == 0 {
+    //     let msg: String = String::from("Hello");
+    //     hypercube::broadcast_send(msg, n, id, &all_my_tx);
+    // } else {
+    //     let msg = hypercube::broadcast_recv(0, n, id, &all_my_tx, &all_my_rx);
+    //     println!("{}", msg);
+    // }
 
-    // Code for simulated one-to-all broadcast.
+    //////////////////////////////////////////////
+    // Code for simulated one-to-all broadcast. //
     //////////////////////////////////////////////
     // let msg = format!("Hello there!");
     // hypercube::broadcast_sim(1, &msg, n, id, &all_my_tx, &all_my_rx)
 }
 
 fn main() {
-    let handles = hypercube::run(3, my_thread);
-    // let handles = ring::run(9, my_thread);
+    // let handles = hypercube::run(3, my_thread);
+    let handles = ring::run(9, my_thread);
 
     for handle in handles {
         handle.join().unwrap();
